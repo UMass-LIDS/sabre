@@ -76,7 +76,7 @@ def do_figure(prefix, subfigs, algorithms, metrics, term = None):
             cnt = 0
             max_threads = 5
             threads = []
-            for trace in os.listdir(dir)[:100]: # use this line to limit directory size
+            for trace in os.listdir(dir)[:]: # use this line to limit directory size
                 cnt += 1
                 print('%d' % cnt, end = '')
                 sys.stdout.flush()
