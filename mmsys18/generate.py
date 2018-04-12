@@ -577,19 +577,19 @@ def figure8():
     prefix = 'fig8'
 
     algorithms = [
-        ('BOLA-PL', ['-a', 'bolae', '-noa', '-ao', '-noibr'], ' lc 7'),
-        ('BOLA-E' , ['-a', 'bolae', '-noa', '-ao'          ], ' lc 6'),
+        ('BOLA',    ['-a', 'bola',  '-ao', '-ab'],    ' lc 4'),
+        ('BOLA-PL', ['-a', 'bolae', '-ao', '-noibr'], ' lc 7'),
+        ('BOLA-E' , ['-a', 'bolae', '-ao'          ], ' lc 6'),
     ]
 
     metrics = [
-        ('rebuffer ratio'   , 'rebuffer ratio'),
-        ('average bitrate oscillation', 'time average bitrate change', {'xtics': 50}),
-        ('average bitrate'    , 'time average played bitrate', {'xtics': 1000}),
+        ('rebuffer ratio'   , 'rebuffer ratio', {'xtics' : 0.1}),
+        ('average bitrate oscillation', 'time average bitrate change', {'xtics': 150}),
+        ('average bitrate'    , 'time average played bitrate', {'xtics': 500}),
     ]
 
     subfigs = [
-        ('3G Live 10s'   , '3Glogs', ['-m', 'bbb.json'  , '-b', '10']),
-#        ('3G VOD'   , '3Glogs', ['-m', 'bbb.json'  , '-b', '25']),
+        ('3G Live 10s'   , '3Glogs', ['-m', 'bbb.json'  , '-b', '10'], [0.6, 600, 2000]),
     ]
 
     do_figure(prefix, subfigs, algorithms, metrics)
