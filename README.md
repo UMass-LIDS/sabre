@@ -6,6 +6,14 @@ Sabre is an open-source simulation environment for ABR algorithms. It is a Pytho
 
 For documentation about Sabre, read our [wiki](https://github.com/UMass-Lids/sabre/wiki).
 
+## Downloading
+
+You can checkout the project repository using the command
+```
+git clone https://github.com/UMass-LIDS/sabre.git
+```
+Otherwise, you can download a zipfile [here](https://github.com/UMass-LIDS/sabre/archive/master.zip).
+
 ## Citing
 
 If you want to cite Sabre, please refer to the following paper:
