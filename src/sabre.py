@@ -722,7 +722,7 @@ class BolaEnh(Abr):
         self.utilities = [math.log(b) + utility_offset for b in manifest.bitrates]
 
         if self.no_ibr:
-            self.gp = config['gp'] - utility_offset
+            self.gp = config['gp'] - 1 # to match BOLA Basic
             buffer = config['buffer_size']
             self.Vp = (buffer - manifest.segment_time) / (self.utilities[-1] + self.gp)
         else:
