@@ -115,7 +115,7 @@ def do_figure(prefix, subfigs, algorithms, metrics, term = None):
                     threads[0].join()
                     threads.pop(0)
         
-                command = ['python3', '../src/sabre.py', '-n', dir + '/' + trace] + args
+                command = ['python3', './sabre-mmsys18.py', '-n', dir + '/' + trace] + args
                 t = threading.Thread(target = thread_run_sabre, args = (results, command))
                 threads.append(t)
                 t.start()
