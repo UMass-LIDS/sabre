@@ -18,4 +18,4 @@ Otherwise, you can download a zipfile [here](https://github.com/UMass-LIDS/sabre
 
 If you want to cite Sabre, please refer to the following paper:
 
-Kevin Spiteri, Ramesh Sitaraman, and Daniel Sparacio. 2018. From Theory to Practice: Improving Bitrate Adaptation in the DASH Reference Player. In *Proceedings of the 9th International Conference on Multimedia Systems.* ACM.
+Kevin Spiteri, Ramesh Sitaraman, and Daniel Sparacio. 2018. From Theory to Practice: Improving Bitrate Adaptation in the DASH Reference Player. In *MMSys '18: 9th ACM Multimedia Systems Conference, June 12-15, 2018, Amsterdam, Netherlands.* [https://doi.org/10.1145/3204949.3204953](https://doi.org/10.1145/3204949.3204953)
