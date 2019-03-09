@@ -26,6 +26,8 @@ import json
 import math
 import sys
 import string
+import os
+import imp
 from collections import namedtuple
 from enum import Enum
 
@@ -43,6 +45,7 @@ from enum import Enum
 #     latency estimate
 #     rebuffer event count
 #     rebuffer total time
+#     session info
 
 
 def load_json(path):
@@ -442,7 +445,24 @@ class ThroughputHistory:
     def push(self, time, tput, lat):
         raise NotImplementedError
 
+class SessionInfo:
+
+    def __init__(self):
+        pass
+
+    def get_throughput(self):
+        global throughput
+        return throughput
+
+    def get_buffer_contents(self):
+        global buffer_contents
+        return buffer_contents[:]
+
+session_info = SessionInfo()
+
 class Abr:
+
+    session = session_info
 
     def __init__(self, config):
         pass
@@ -472,7 +492,10 @@ class Abr:
             quality += 1
         return quality
 
-class FastSwitch:
+class Replacement:
+
+    session = session_info
+
     def check_replace(self, quality):
         return None
     def check_abandon(self, progress, buffer_level):
@@ -1106,11 +1129,11 @@ class Bba(Abr):
 
 abr_list['bba'] = Bba
 
-class NoReplace(FastSwitch):
+class NoReplace(Replacement):
         pass
 
 # TODO: different classes instead of strategy
-class Replace(FastSwitch):
+class Replace(Replacement):
 
     def __init__(self, strategy):
         self.strategy = strategy
@@ -1169,6 +1192,43 @@ class Replace(FastSwitch):
             return -1
         return None
 
+
+class AbrInput(Abr):
+
+    def __init__(self, path, config):
+        self.name = os.path.splitext(os.path.basename(path))[0]
+        self.abr_module = imp.load_source(self.name, path)
+        self.abr_class = getattr(self.abr_module, self.name)
+        self.abr_class.session = session_info
+        self.abr = self.abr_class(config)
+
+    def get_quality_delay(self, segment_index):
+        return self.abr.get_quality_delay(segment_index)
+    def get_first_quality(self):
+        return self.abr.get_first_quality()
+    def report_delay(self, delay):
+        self.abr.report_delay(delay)
+    def report_download(self, metrics, is_replacment):
+        self.abr.report_download(metrics, is_replacment)
+    def report_seek(self, where):
+        self.abr.report_seek(where)
+    def check_abandon(self, progress, buffer_level):
+        return self.abr.check_abandon(progress, buffer_level)
+
+class ReplacementInput(Replacement):
+
+    def __init__(self, path):
+        self.name = os.path.splitext(os.path.basename(path))[0]
+        self.replacement_module = imp.load_source(self.name, path)
+        self.replacement_class = getattr(self.replacement_module, self.name)
+        self.replacement_class.session = session_info
+        self.replacement = self.replacement_class()
+
+    def check_replace(self, quality):
+        return self.replacement.check_replace(quality)
+    def check_abandon(self, progress, buffer_level):
+        return self.replacement.check_abandon(progress, buffer_level)
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description = 'Simulate an ABR session.',
                                      formatter_class = argparse.ArgumentDefaultsHelpFormatter)
@@ -1182,8 +1242,9 @@ if __name__ == '__main__':
     parser.add_argument('-ml', '--movie-length', metavar = 'LEN', type = float, default = None,
                         help = 'Specify the movie length in seconds (use MOVIE length if None).')
     parser.add_argument('-a', '--abr', metavar = 'ABR',
-                        choices = abr_list.keys(), default = abr_default,
-                        help = 'Choose ABR algorithm (%s).' % ', '.join(abr_list.keys()))
+                        #choices = abr_list.keys(),
+                        default = abr_default,
+                        help = 'Choose ABR algorithm from predefined list (%s), or specify .py module to import.' % ', '.join(abr_list.keys()))
     parser.add_argument('-ab', '--abr-basic', action = 'store_true',
                         help = 'Set ABR to BASIC (ABR strategy dependant).')
     parser.add_argument('-ao', '--abr-osc', action = 'store_true',
@@ -1207,8 +1268,9 @@ if __name__ == '__main__':
                         help = 'Specify when to seek in seconds and where to seek in seconds.')
     choices = ['none', 'left', 'right']
     parser.add_argument('-r', '--replace', metavar = 'REPLACEMENT',
-                        choices = choices, default  =  'none',
-                        help = 'Set replacement strategy (%s).' % ', '.join(choices))
+                        #choices = choices,
+                        default  =  'none',
+                        help = 'Set replacement strategy from predefined list (%s), or specify .py module to import.' % ', '.join(choices))
     parser.add_argument('-b', '--max-buffer', metavar = 'MAXBUFFER', type = float, default = 25,
                         help = 'Specify the maximum buffer size in seconds.')
     parser.add_argument('-noa', '--no-abandon', action = 'store_true',
@@ -1262,6 +1324,7 @@ if __name__ == '__main__':
                             bitrates     = bitrates,
                             utilities    = utilities,
                             segments     = manifest['segment_sizes_bits'])
+    SessionInfo.manifest = manifest
 
     network_trace = load_json(args.network)
     network_trace = [NetworkPeriod(time      = p['duration_ms'],
@@ -1278,11 +1341,16 @@ if __name__ == '__main__':
               'abr_osc': args.abr_osc,
               'abr_basic': args.abr_basic,
               'no_ibr': args.no_insufficient_buffer_rule}
-    abr_list[args.abr].use_abr_o = args.abr_osc
-    abr_list[args.abr].use_abr_u = not args.abr_osc
-    abr = abr_list[args.abr](config)
+    if args.abr[-3:] == '.py':
+        abr = AbrInput(args.abr, config)
+    else:
+        abr_list[args.abr].use_abr_o = args.abr_osc
+        abr_list[args.abr].use_abr_u = not args.abr_osc
+        abr = abr_list[args.abr](config)
     network = NetworkModel(network_trace)
 
+    if args.replace[-3:] == '.py':
+        replacer = ReplacementInput(args.replace)
     if args.replace == 'left':
         replacer = Replace(0)
     elif args.replace == 'right':
