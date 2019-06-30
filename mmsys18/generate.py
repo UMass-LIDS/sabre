@@ -253,13 +253,13 @@ def figure12_write_network():
 def figure6a():
     figure12_write_network()
 
-    completed = subprocess.run(['python3', '../src/sabre.py', '-v',
+    completed = subprocess.run(['python3', './sabre-mmsys18.py', '-v',
                                 '-m', 'bbb.json', '-n', 'tmp/network.json',
                                 '-a', 'bola', '-ab'],
                                stdout = subprocess.PIPE)
     basic = completed.stdout.decode('ascii')
 
-    completed = subprocess.run(['python3', '../src/sabre.py', '-v',
+    completed = subprocess.run(['python3', './sabre-mmsys18.py', '-v',
                                 '-m', 'bbb.json', '-n', 'tmp/network.json',
                                 '-a', 'bolae'],
                                stdout = subprocess.PIPE)
@@ -315,14 +315,14 @@ set output
 def figure6b():
     figure12_write_network()
 
-    completed = subprocess.run(['python3', '../src/sabre.py', '-v',
+    completed = subprocess.run(['python3', './sabre-mmsys18.py', '-v',
                                 '-m', 'bbb.json', '-n', 'tmp/network.json',
                                 '-s', '120', '180',
                                 '-a', 'bola', '-ab'],
                                stdout = subprocess.PIPE)
     basic = completed.stdout.decode('ascii')
 
-    completed = subprocess.run(['python3', '../src/sabre.py', '-v',
+    completed = subprocess.run(['python3', './sabre-mmsys18.py', '-v',
                                 '-m', 'bbb.json', '-n', 'tmp/network.json',
                                 '-s', '120', '180',
                                 '-a', 'bolae'],
