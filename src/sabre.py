@@ -27,7 +27,7 @@ import math
 import sys
 import string
 import os
-import imp
+from importlib.machinery import SourceFileLoader
 from collections import namedtuple
 from enum import Enum
 
@@ -1197,7 +1197,7 @@ class AbrInput(Abr):
 
     def __init__(self, path, config):
         self.name = os.path.splitext(os.path.basename(path))[0]
-        self.abr_module = imp.load_source(self.name, path)
+        self.abr_module = SourceFileLoader(self.name, path).load_module()
         self.abr_class = getattr(self.abr_module, self.name)
         self.abr_class.session = session_info
         self.abr = self.abr_class(config)
@@ -1219,7 +1219,7 @@ class ReplacementInput(Replacement):
 
     def __init__(self, path):
         self.name = os.path.splitext(os.path.basename(path))[0]
-        self.replacement_module = imp.load_source(self.name, path)
+        self.replacement_module = SourceFileLoader(self.name, path).load_module()
         self.replacement_class = getattr(self.replacement_module, self.name)
         self.replacement_class.session = session_info
         self.replacement = self.replacement_class()
