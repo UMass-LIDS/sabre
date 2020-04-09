@@ -1363,7 +1363,7 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--replace', metavar = 'REPLACEMENT',
                         choices = choices, default  =  'none',
                         help = 'Set replacement strategy (%s).' % ', '.join(choices))
-    parser.add_argument('-b', '--max-buffer', metavar = 'MAXBUFFER', type = float, default = 150,
+    parser.add_argument('-b', '--max-buffer', metavar = 'MAXBUFFER', type = float, default = 25,
                         help = 'Specify the maximum buffer size in seconds.')
     parser.add_argument('-noa', '--no-abandon', action = 'store_true',
                         help = 'Disable abandonment.')
