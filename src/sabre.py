@@ -1,3 +1,5 @@
+# Snapshot of sabre.py used to generate mmsys '18 plots
+
 # Copyright (c) 2018, Kevin Spiteri
 # All rights reserved.
 #
@@ -26,10 +28,31 @@ import json
 import math
 import sys
 import string
-import os
-from importlib.machinery import SourceFileLoader
 from collections import namedtuple
 from enum import Enum
+
+import os
+os.environ['CUDA_VISIBLE_DEVICES']=''
+
+import numpy as np
+import tensorflow as tf
+import a3c
+
+## The following parameters are specific to Pensieve ABR
+S_INFO = 6  # bit_rate, buffer_size, rebuffering_time, bandwidth_measurement, chunk_til_video_end
+S_LEN = 8  # take how many frames in the past
+A_DIM = 6
+ACTOR_LR_RATE = 0.0001
+CRITIC_LR_RATE = 0.001
+NN_MODEL = './pensieve_pretrained_models/pretrain_linear_reward.ckpt'
+DEFAULT_QUALITY = 0  # default video quality without agent
+M_IN_K = 1000.0
+REBUF_PENALTY = 4.3  # 1 sec rebuffering -> this number of Mbps
+SMOOTH_PENALTY = 1
+RAND_RANGE = 1000
+VIDEO_BIT_RATE = [300,750,1200,1850,2850,4300]
+BUFFER_NORM_FACTOR = 10.0
+## End of Pensieve parameters
 
 # Units used throughout:
 #     size     : bits
@@ -45,7 +68,6 @@ from enum import Enum
 #     latency estimate
 #     rebuffer event count
 #     rebuffer total time
-#     session info
 
 
 def load_json(path):
@@ -445,24 +467,7 @@ class ThroughputHistory:
     def push(self, time, tput, lat):
         raise NotImplementedError
 
-class SessionInfo:
-
-    def __init__(self):
-        pass
-
-    def get_throughput(self):
-        global throughput
-        return throughput
-
-    def get_buffer_contents(self):
-        global buffer_contents
-        return buffer_contents[:]
-
-session_info = SessionInfo()
-
 class Abr:
-
-    session = session_info
 
     def __init__(self, config):
         pass
@@ -492,10 +497,7 @@ class Abr:
             quality += 1
         return quality
 
-class Replacement:
-
-    session = session_info
-
+class FastSwitch:
     def check_replace(self, quality):
         return None
     def check_abandon(self, progress, buffer_level):
@@ -745,7 +747,7 @@ class BolaEnh(Abr):
         self.utilities = [math.log(b) + utility_offset for b in manifest.bitrates]
 
         if self.no_ibr:
-            self.gp = config['gp'] - 1 # to match BOLA Basic
+            self.gp = config['gp'] - utility_offset
             buffer = config['buffer_size']
             self.Vp = (buffer - manifest.segment_time) / (self.utilities[-1] + self.gp)
         else:
@@ -1109,6 +1111,135 @@ class DynamicDash(Abr):
 
 abr_list['dynamicdash'] = DynamicDash
 
+# Simply copied the code from Pensieve: https://github.com/hongzimao/pensieve
+class Pensieve(Abr):
+
+    def __init__(self, config):
+        self.sess = tf.Session()
+
+        self.actor = a3c.ActorNetwork(self.sess, state_dim=[S_INFO, S_LEN], action_dim=A_DIM, learning_rate=ACTOR_LR_RATE)
+        self.critic = a3c.CriticNetwork(self.sess, state_dim=[S_INFO, S_LEN], learning_rate=CRITIC_LR_RATE)
+
+        self.sess.run(tf.initialize_all_variables())
+        self.saver = tf.train.Saver()
+
+        # restore neural net parameters
+        self.nn_model = NN_MODEL
+        if self.nn_model is not None:  # nn_model is the path to file
+            self.saver.restore(self.sess, self.nn_model)
+            print("Model restored.")
+
+        self.init_action = np.zeros(A_DIM)
+        self.init_action[DEFAULT_QUALITY] = 1
+
+        self.s_batch = [np.zeros((S_INFO, S_LEN))]
+        self.a_batch = [self.init_action]
+        self.r_batch = []
+
+        self.train_counter = 0
+
+        self.last_quality = DEFAULT_QUALITY
+        self.last_bit_rate = DEFAULT_QUALITY
+        self.last_total_rebuf = 0
+        # need this storage, because observation only contains total rebuffering time
+        # we compute the difference to get
+
+        self.video_chunk_count = 0
+        self.chunk_fetch_time = 0
+        self.chunk_size = 0
+
+    def get_chunk_size(self, quality, segment_index):
+        global manifest
+
+        if segment_index+A_DIM <= len(manifest.segments):
+            return manifest.segments[segment_index][quality]
+        else:
+            return 0
+
+    def get_quality_delay(self, segment_index):
+        global rebuffer_time
+        global manifest
+
+        rebuffer_time = float(rebuffer_time - self.last_total_rebuf)
+        reward = manifest.bitrates[self.last_quality] / M_IN_K - REBUF_PENALTY * rebuffer_time / M_IN_K - SMOOTH_PENALTY * np.abs(manifest.bitrates[self.last_quality] - self.last_bit_rate) / M_IN_K
+
+        self.last_bit_rate = manifest.bitrates[self.last_quality]
+        self.last_total_rebuf = rebuffer_time
+        
+        # retrieve previous state
+        if len(self.s_batch) == 0:
+            state = [np.zeros((S_INFO, S_LEN))]
+        else:
+            state = np.array(self.s_batch[-1], copy=True)
+        
+        # compute bandwidth measurement
+        video_chunk_fetch_time = self.chunk_fetch_time
+        video_chunk_size = self.chunk_size
+        
+        # compute number of video chunks left
+        video_chunk_remain = len(manifest.segments) - self.video_chunk_count
+        self.video_chunk_count += 1
+        
+        # dequeue history record
+        state = np.roll(state, -1, axis=1)
+        
+        next_video_chunk_sizes = []
+        for i in range(A_DIM):
+            next_video_chunk_sizes.append(self.get_chunk_size(i, self.video_chunk_count))
+        
+        # this should be S_INFO number of terms
+        try:
+            state[0, -1] = manifest.bitrates[self.last_quality] / float(np.max(manifest.bitrates))
+            state[1, -1] = get_buffer_level() / BUFFER_NORM_FACTOR
+            state[2, -1] = float(video_chunk_size) / float(video_chunk_fetch_time) / M_IN_K  # kilo byte / ms
+            state[3, -1] = float(video_chunk_fetch_time) / M_IN_K / BUFFER_NORM_FACTOR  # 10 sec
+            state[4, :A_DIM] = np.array(next_video_chunk_sizes) / M_IN_K / M_IN_K  # mega byte
+            state[5, -1] = np.minimum(video_chunk_remain, len(manifest.segments)) / float(len(manifest.segments))
+        except ZeroDivisionError:
+            # this should occur VERY rarely (1 out of 3000), should be a dash issue
+            # in this case we ignore the observation and roll back to an eariler one
+            if len(self.s_batch) == 0:
+                state = [np.zeros((S_INFO, S_LEN))]
+            else:
+                state = np.array(self.s_batch[-1], copy=True)
+        
+        action_prob = self.actor.predict(np.reshape(state, (1, S_INFO, S_LEN)))
+        action_cumsum = np.cumsum(action_prob)
+        bit_rate = (action_cumsum > np.random.randint(1, RAND_RANGE) / float(RAND_RANGE)).argmax()
+        # Note: we need to discretize the probability into 1/RAND_RANGE steps,
+        # because there is an intrinsic discrepancy in passing single state and batch states
+
+        print(bit_rate, self.video_chunk_count)
+        #quality = np.random.randint(2)#get_quality(str(bit_rate))
+        quality = bit_rate
+        
+        # record [state, action, reward]
+        # put it here after training, notice there is a shift in reward storage
+        if self.video_chunk_count >= len(manifest.segments):
+            self.s_batch = [np.zeros((S_INFO, S_LEN))]
+        else:
+            self.s_batch.append(state)
+
+        self.last_quality = quality
+
+        return (quality, 0)
+
+    def report_delay(self, delay):
+        pass
+
+    def report_download(self, metrics, is_replacment):
+        global manifest
+
+        self.last_quality = metrics.quality
+        self.chunk_size = metrics.size
+        self.chunk_fetch_time = metrics.time
+
+    def report_seek(self, where):
+        pass
+
+
+abr_list['pensieve'] = Pensieve
+
 class Bba(Abr):
 
     def __init__(self, config):
@@ -1129,11 +1260,11 @@ class Bba(Abr):
 
 abr_list['bba'] = Bba
 
-class NoReplace(Replacement):
+class NoReplace(FastSwitch):
         pass
 
 # TODO: different classes instead of strategy
-class Replace(Replacement):
+class Replace(FastSwitch):
 
     def __init__(self, strategy):
         self.strategy = strategy
@@ -1192,43 +1323,6 @@ class Replace(Replacement):
             return -1
         return None
 
-
-class AbrInput(Abr):
-
-    def __init__(self, path, config):
-        self.name = os.path.splitext(os.path.basename(path))[0]
-        self.abr_module = SourceFileLoader(self.name, path).load_module()
-        self.abr_class = getattr(self.abr_module, self.name)
-        self.abr_class.session = session_info
-        self.abr = self.abr_class(config)
-
-    def get_quality_delay(self, segment_index):
-        return self.abr.get_quality_delay(segment_index)
-    def get_first_quality(self):
-        return self.abr.get_first_quality()
-    def report_delay(self, delay):
-        self.abr.report_delay(delay)
-    def report_download(self, metrics, is_replacment):
-        self.abr.report_download(metrics, is_replacment)
-    def report_seek(self, where):
-        self.abr.report_seek(where)
-    def check_abandon(self, progress, buffer_level):
-        return self.abr.check_abandon(progress, buffer_level)
-
-class ReplacementInput(Replacement):
-
-    def __init__(self, path):
-        self.name = os.path.splitext(os.path.basename(path))[0]
-        self.replacement_module = SourceFileLoader(self.name, path).load_module()
-        self.replacement_class = getattr(self.replacement_module, self.name)
-        self.replacement_class.session = session_info
-        self.replacement = self.replacement_class()
-
-    def check_replace(self, quality):
-        return self.replacement.check_replace(quality)
-    def check_abandon(self, progress, buffer_level):
-        return self.replacement.check_abandon(progress, buffer_level)
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description = 'Simulate an ABR session.',
                                      formatter_class = argparse.ArgumentDefaultsHelpFormatter)
@@ -1242,9 +1336,8 @@ if __name__ == '__main__':
     parser.add_argument('-ml', '--movie-length', metavar = 'LEN', type = float, default = None,
                         help = 'Specify the movie length in seconds (use MOVIE length if None).')
     parser.add_argument('-a', '--abr', metavar = 'ABR',
-                        #choices = abr_list.keys(),
-                        default = abr_default,
-                        help = 'Choose ABR algorithm from predefined list (%s), or specify .py module to import.' % ', '.join(abr_list.keys()))
+                        choices = abr_list.keys(), default = abr_default,
+                        help = 'Choose ABR algorithm (%s).' % ', '.join(abr_list.keys()))
     parser.add_argument('-ab', '--abr-basic', action = 'store_true',
                         help = 'Set ABR to BASIC (ABR strategy dependant).')
     parser.add_argument('-ao', '--abr-osc', action = 'store_true',
@@ -1268,13 +1361,14 @@ if __name__ == '__main__':
                         help = 'Specify when to seek in seconds and where to seek in seconds.')
     choices = ['none', 'left', 'right']
     parser.add_argument('-r', '--replace', metavar = 'REPLACEMENT',
-                        #choices = choices,
-                        default  =  'none',
-                        help = 'Set replacement strategy from predefined list (%s), or specify .py module to import.' % ', '.join(choices))
-    parser.add_argument('-b', '--max-buffer', metavar = 'MAXBUFFER', type = float, default = 25,
+                        choices = choices, default  =  'none',
+                        help = 'Set replacement strategy (%s).' % ', '.join(choices))
+    parser.add_argument('-b', '--max-buffer', metavar = 'MAXBUFFER', type = float, default = 150,
                         help = 'Specify the maximum buffer size in seconds.')
     parser.add_argument('-noa', '--no-abandon', action = 'store_true',
                         help = 'Disable abandonment.')
+    parser.add_argument('-svc', '--enable-svc', action = 'store_true',
+                        help = 'Enable abandonment.')
     parser.add_argument('-rmp', '--rampup-threshold', metavar = 'THRESHOLD',
                         type = int, default = None,
                         help = 'Specify at what quality index we are ramped up (None matches network).')
@@ -1285,6 +1379,8 @@ if __name__ == '__main__':
     verbose = args.verbose
 
     buffer_contents = []
+    fs_discarded = {}
+    discard_bitrate = 0
     buffer_fcc = 0
     pending_quality_up = []
     reaction_metrics = []
@@ -1324,7 +1420,6 @@ if __name__ == '__main__':
                             bitrates     = bitrates,
                             utilities    = utilities,
                             segments     = manifest['segment_sizes_bits'])
-    SessionInfo.manifest = manifest
 
     network_trace = load_json(args.network)
     network_trace = [NetworkPeriod(time      = p['duration_ms'],
@@ -1341,16 +1436,11 @@ if __name__ == '__main__':
               'abr_osc': args.abr_osc,
               'abr_basic': args.abr_basic,
               'no_ibr': args.no_insufficient_buffer_rule}
-    if args.abr[-3:] == '.py':
-        abr = AbrInput(args.abr, config)
-    else:
-        abr_list[args.abr].use_abr_o = args.abr_osc
-        abr_list[args.abr].use_abr_u = not args.abr_osc
-        abr = abr_list[args.abr](config)
+    abr_list[args.abr].use_abr_o = args.abr_osc
+    abr_list[args.abr].use_abr_u = not args.abr_osc
+    abr = abr_list[args.abr](config)
     network = NetworkModel(network_trace)
 
-    if args.replace[-3:] == '.py':
-        replacer = ReplacementInput(args.replace)
     if args.replace == 'left':
         replacer = Replace(0)
     elif args.replace == 'right':
@@ -1373,6 +1463,10 @@ if __name__ == '__main__':
     throughput_history.push(download_time, t, l)
     #print('%d,%d -> %d,%d' % (t, l, throughput, latency))
     total_play_time += download_metric.time
+    
+    if args.abr == 'pensieve':
+        print('Running Pensieve Algorithm\n')
+        abr.report_download(download_metric, 0)
 
     if verbose:
         print('[%d-%d]  %d: q=%d s=%d/%d t=%d=%d+%d bl=0->0->%d' %
@@ -1483,6 +1577,7 @@ if __name__ == '__main__':
         if replace == None:
             if download_metric.abandon_to_quality == None:
                 buffer_contents += [quality]
+                #print (buffer_contents)
                 next_segment += 1
             else:
                 abandon_to_quality = download_metric.abandon_to_quality
@@ -1490,7 +1585,10 @@ if __name__ == '__main__':
             # abandon_to_quality == None
             if download_metric.abandon_to_quality == None:
                 if get_buffer_level() + manifest.segment_time * replace >= 0:
+                    fs_discarded[replace] = str(buffer_contents[replace])+str(quality)
+                    discard_bitrate += manifest.bitrates[buffer_contents[replace]]
                     buffer_contents[replace] = quality
+                    #print (buffer_contents, fs_discarded)
                 else:
                     print('WARNING: too late to replace')
                     pass
@@ -1538,6 +1636,8 @@ if __name__ == '__main__':
     to_time_average = 1 / (total_play_time / manifest.segment_time)
     count = len(manifest.segments)
     time = count * manifest.segment_time + rebuffer_time + startup_time
+    if args.enable_svc:
+        played_bitrate += discard_bitrate
     print('buffer size: %d' % buffer_size)
     print('total played utility: %f' % played_utility)
     print('time average played utility: %f' % (played_utility * to_time_average))
