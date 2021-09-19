@@ -1351,7 +1351,7 @@ if __name__ == '__main__':
 
     if args.replace[-3:] == '.py':
         replacer = ReplacementInput(args.replace)
-    if args.replace == 'left':
+    elif args.replace == 'left':
         replacer = Replace(0)
     elif args.replace == 'right':
         replacer = Replace(1)
