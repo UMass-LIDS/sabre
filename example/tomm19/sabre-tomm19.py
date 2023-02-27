@@ -1348,7 +1348,7 @@ if __name__ == '__main__':
         else:
             (quality, delay) = (abandoned_to_quality, 0)
             replace = None
-            abandon_to_quality = None
+            abandoned_to_quality = None
 
         if replace != None:
             delay = 0
@@ -1419,7 +1419,7 @@ if __name__ == '__main__':
                 buffer_contents += [quality]
                 next_segment += 1
             else:
-                abandon_to_quality = download_metric.abandon_to_quality
+                abandoned_to_quality = download_metric.abandon_to_quality
         else:
             # abandon_to_quality == None
             if download_metric.abandon_to_quality == None:
